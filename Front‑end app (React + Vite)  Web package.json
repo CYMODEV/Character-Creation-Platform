@@ -1,0 +1,176 @@
+{
+  "name": "@cymos/web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "axios": "^1.7.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0"
+  }
+}
+// apps/web/src/api/client.ts
+import axios from "axios";
+export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || "http://localhost:4000" });
+// apps/web/src/main.tsx
+import React from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App";
+createRoot(document.getElementById("root")!).render(<App />);
+// apps/web/src/App.tsx
+import React from "react";
+import CharacterCreator from "./components/CharacterCreator";
+import StewardReview from "./components/StewardReview";
+import LicensePanel from "./components/LicensePanel";
+import QuestBoard from "./components/QuestBoard";
+import IndexDashboard from "./components/IndexDashboard";
+
+export default function App() {
+  return (
+    <div style={{ padding: 24, fontFamily: "system-ui" }}>
+      <h1>CYMOS Character Platform</h1>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+        <CharacterCreator />
+        <StewardReview />
+        <LicensePanel />
+        <QuestBoard />
+        <IndexDashboard />
+      </div>
+    </div>
+  );
+}
+// apps/web/src/components/CharacterCreator.tsx
+import React, { useState } from "react";
+import { api } from "../api/client";
+
+export default function CharacterCreator() {
+  const [form, setForm] = useState({ name: "", archetype: "", purpose: "", canonHash: "", alpha: 0.85, beta: 0.05, gamma: 0.05, delta: 0.05 });
+
+  const submit = async () => {
+    const res = await api.post("/characters", {
+      name: form.name,
+      archetype: form.archetype,
+      purpose: form.purpose,
+      voiceRate: 0.065,
+      canonHash: form.canonHash,
+      splits: { alpha: form.alpha, beta: form.beta, gamma: form.gamma, delta: form.delta }
+    });
+    alert(`Character created: ${res.data.name}`);
+  };
+
+  return (
+    <div>
+      <h2>Character Creator</h2>
+      <input placeholder="Name" value={form.name} onChange={e => setForm(s => ({ ...s, name: e.target.value }))} />
+      <input placeholder="Archetype" value={form.archetype} onChange={e => setForm(s => ({ ...s, archetype: e.target.value }))} />
+      <input placeholder="Purpose" value={form.purpose} onChange={e => setForm(s => ({ ...s, purpose: e.target.value }))} />
+      <input placeholder="Canon Hash" value={form.canonHash} onChange={e => setForm(s => ({ ...s, canonHash: e.target.value }))} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
+        <label>α <input type="number" step="0.01" value={form.alpha} onChange={e => setForm(s => ({ ...s, alpha: Number(e.target.value) }))} /></label>
+        <label>β <input type="number" step="0.01" value={form.beta} onChange={e => setForm(s => ({ ...s, beta: Number(e.target.value) }))} /></label>
+        <label>γ <input type="number" step="0.01" value={form.gamma} onChange={e => setForm(s => ({ ...s, gamma: Number(e.target.value) }))} /></label>
+        <label>δ <input type="number" step="0.01" value={form.delta} onChange={e => setForm(s => ({ ...s, delta: Number(e.target.value) }))} /></label>
+      </div>
+      <button onClick={submit}>Mint Character</button>
+    </div>
+  );
+}
+// apps/web/src/components/IndexDashboard.tsx
+import React, { useEffect, useState } from "react";
+import { api } from "../api/client";
+
+type Row = { id: string; name: string; cps: number; trustScore: number; yield: number; reach: number };
+
+export default function IndexDashboard() {
+  const [rows, setRows] = useState<Row[]>([]);
+  useEffect(() => { api.get("/index/prime").then(r => setRows(r.data)); }, []);
+  return (
+    <div>
+      <h2>CSEI-Prime</h2>
+      <table>
+        <thead>
+          <tr><th>Rank</th><th>Name</th><th>CPS</th><th>Trust</th><th>Yield %</th><th>Reach</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.id}>
+              <td>{i+1}</td><td>{r.name}</td><td>{r.cps}</td><td>{r.trustScore}</td><td>{r.yield.toFixed(2)}</td><td>{r.reach}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+// apps/web/src/components/StewardReview.tsx
+import React from "react";
+export default function StewardReview() {
+  return (
+    <div>
+      <h2>Steward Review</h2>
+      <p>Originality, cohesion, safety checks (wire to API/governance).</p>
+      <button>Approve</button> <button>Request Changes</button>
+    </div>
+  );
+}
+// apps/web/src/components/LicensePanel.tsx
+import React, { useState } from "react";
+import { api } from "../api/client";
+
+export default function LicensePanel() {
+  const [payload, setPayload] = useState({ characterId: "", channel: "Retail", region: "US", durationMo: 12, exclusivity: "Non-exclusive", feePerUnit: 0.02, percentage: 0.05 });
+
+  const create = async () => {
+    const res = await api.post("/licenses", payload);
+    alert(`License created: ${res.data.id}`);
+  };
+
+  return (
+    <div>
+      <h2>License Panel</h2>
+      <input placeholder="Character ID" value={payload.characterId} onChange={e => setPayload(s => ({ ...s, characterId: e.target.value }))} />
+      <select value={payload.channel} onChange={e => setPayload(s => ({ ...s, channel: e.target.value }))}>
+        <option>Retail</option><option>MobileGame</option><option>Event</option>
+      </select>
+      <select value={payload.region} onChange={e => setPayload(s => ({ ...s, region: e.target.value }))}>
+        <option>US</option><option>CA</option><option>EU</option>
+      </select>
+      <input type="number" value={payload.durationMo} onChange={e => setPayload(s => ({ ...s, durationMo: Number(e.target.value) }))} />
+      <select value={payload.exclusivity} onChange={e => setPayload(s => ({ ...s, exclusivity: e.target.value }))}>
+        <option>Non-exclusive</option><option>Exclusive</option>
+      </select>
+      <input type="number" step="0.01" value={payload.feePerUnit} onChange={e => setPayload(s => ({ ...s, feePerUnit: Number(e.target.value) }))} />
+      <input type="number" step="0.01" value={payload.percentage} onChange={e => setPayload(s => ({ ...s, percentage: Number(e.target.value) }))} />
+      <button onClick={create}>Create License</button>
+    </div>
+  );
+}
+// apps/web/src/components/QuestBoard.tsx
+import React, { useState } from "react";
+import { api } from "../api/client";
+
+export default function QuestBoard() {
+  const [q, setQ] = useState({ characterId: "", title: "", objective: "", rewardCreds: 250, revShareTag: true });
+  const create = async () => { const r = await api.post("/quests", q); alert(`Quest: ${r.data.title}`); };
+  return (
+    <div>
+      <h2>Quest Board</h2>
+      <input placeholder="Character ID" value={q.characterId} onChange={e => setQ(s => ({ ...s, characterId: e.target.value }))} />
+      <input placeholder="Title" value={q.title} onChange={e => setQ(s => ({ ...s, title: e.target.value }))} />
+      <input placeholder="Objective" value={q.objective} onChange={e => setQ(s => ({ ...s, objective: e.target.value }))} />
+      <input type="number" value={q.rewardCreds} onChange={e => setQ(s => ({ ...s, rewardCreds: Number(e.target.value) }))} />
+      <label><input type="checkbox" checked={q.revShareTag} onChange={e => setQ(s => ({ ...s, revShareTag: e.target.checked }))} /> Rev-share tag</label>
+      <button onClick={create}>Create Quest</button>
+    </div>
+  );
+}
