@@ -1,0 +1,100 @@
+{
+  "name": "@cymos/contracts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.ts --network localhost"
+  },
+  "devDependencies": {
+    "hardhat": "^2.22.8",
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "typescript": "^5.5.4",
+    "ts-node": "^10.9.2"
+  }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract CharacterRegistry {
+    event CharacterMinted(bytes32 characterId, address owner, string canonHash);
+
+    mapping(bytes32 => address) public owners;
+    mapping(bytes32 => string) public canonHashes;
+
+    function mint(bytes32 characterId, string calldata canonHash) external {
+        require(owners[characterId] == address(0), "Already minted");
+        owners[characterId] = msg.sender;
+        canonHashes[characterId] = canonHash;
+        emit CharacterMinted(characterId, msg.sender, canonHash);
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract CharacterVault {
+    struct Splits { uint256 alpha; uint256 beta; uint256 gamma; uint256 delta; }
+    mapping(bytes32 => Splits) public splitPolicy;
+    mapping(bytes32 => uint256) public balances;
+
+    event RevenueReceived(bytes32 characterId, uint256 amount);
+    event RevenueDistributed(bytes32 characterId, uint256 creator, uint256 stewards, uint256 questPool, uint256 ecosystem);
+
+    function setSplits(bytes32 characterId, uint256 a, uint256 b, uint256 g, uint256 d) external {
+        require(a + b + g + d == 1e18, "Splits must sum to 1e18");
+        splitPolicy[characterId] = Splits(a,b,g,d);
+    }
+
+    function deposit(bytes32 characterId) external payable {
+        balances[characterId] += msg.value;
+        emit RevenueReceived(characterId, msg.value);
+    }
+
+    function distribute(bytes32 characterId) external {
+        Splits memory s = splitPolicy[characterId];
+        uint256 bal = balances[characterId];
+        require(bal > 0, "No balance");
+        uint256 creator = bal * s.alpha / 1e18;
+        uint256 stewards = bal * s.beta / 1e18;
+        uint256 questPool = bal * s.gamma / 1e18;
+        uint256 ecosystem = bal * s.delta / 1e18;
+        balances[characterId] = 0;
+        emit RevenueDistributed(characterId, creator, stewards, questPool, ecosystem);
+        // In a real system, transfer funds to wallets here
+    }
+}
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Governance {
+    struct Proposal { bytes32 id; string title; uint256 approve; uint256 reject; bool active; }
+    mapping(bytes32 => Proposal) public proposals;
+
+    event ProposalCreated(bytes32 id, string title);
+    event Voted(bytes32 id, bool approve, address voter);
+
+    function createProposal(bytes32 id, string calldata title) external {
+        proposals[id] = Proposal(id, title, 0, 0, true);
+        emit ProposalCreated(id, title);
+    }
+
+    function vote(bytes32 id, bool approveVote) external {
+        require(proposals[id].active, "Inactive");
+        if (approveVote) proposals[id].approve++; else proposals[id].reject++;
+        emit Voted(id, approveVote, msg.sender);
+    }
+
+    function close(bytes32 id) external {
+        proposals[id].active = false;
+    }
+}
+// contracts/hardhat.config.ts
+import { HardhatUserConfig } from "hardhat/config";
+import "@nomicfoundation/hardhat-toolbox";
+
+const config: HardhatUserConfig = {
+  solidity: "0.8.20",
+  networks: { localhost: { url: "http://127.0.0.1:8545" } }
+};
+export default config;
