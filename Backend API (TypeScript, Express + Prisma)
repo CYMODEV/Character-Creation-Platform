@@ -1,0 +1,327 @@
+{
+  "name": "@cymos/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "@prisma/client": "^5.15.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "prisma": "^5.15.0",
+    "tsx": "^4.17.0",
+    "typescript": "^5.5.4"
+  }
+}
+// apps/api/prisma/schema.prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+generator client { provider = "prisma-client-js" }
+
+model Character {
+  id            String   @id @default(cuid())
+  name          String
+  archetype     String
+  purpose       String
+  voiceRate     Float    @default(0.065)
+  trustScore    Int      @default(50)
+  canonHash     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  splits        SplitPolicy?
+  licenses      License[]
+  quests        Quest[]
+  metrics       Metrics?
+}
+
+model SplitPolicy {
+  id          String   @id @default(cuid())
+  characterId String   @unique
+  alpha       Float    // creator
+  beta        Float    // stewards
+  gamma       Float    // quest pool
+  delta       Float    // ecosystem
+  character   Character @relation(fields: [characterId], references: [id])
+}
+
+model License {
+  id          String   @id @default(cuid())
+  characterId String
+  channel     String   // Retail, MobileGame, Event
+  region      String   // US, CA, EU
+  durationMo  Int
+  exclusivity String   // Non-exclusive, Exclusive
+  feePerUnit  Float    @default(0.02)
+  percentage  Float    @default(0.05)
+  revenue     Float    @default(0)
+  createdAt   DateTime @default(now())
+  character   Character @relation(fields: [characterId], references: [id])
+}
+
+model Quest {
+  id          String   @id @default(cuid())
+  characterId String
+  title       String
+  objective   String
+  rewardCreds Int
+  revShareTag Boolean  @default(true)
+  proofs      Int      @default(0)
+  inflowUSD   Float    @default(0)
+  createdAt   DateTime @default(now())
+  character   Character @relation(fields: [characterId], references: [id])
+}
+
+model Metrics {
+  id             String   @id @default(cuid())
+  characterId    String   @unique
+  vaultYieldPct  Float    @default(0)
+  narrativeReach Int      @default(0)
+  cps            Int      @default(0)
+  updatedAt      DateTime @updatedAt
+  character      Character @relation(fields: [characterId], references: [id])
+}
+// apps/api/src/index.ts
+import { createServer } from "./server";
+const port = process.env.PORT || 4000;
+createServer().listen(port, () => console.log(`API running on :${port}`));
+// apps/api/src/server.ts
+import express from "express";
+import cors from "cors";
+import characters from "./routes/characters";
+import licenses from "./routes/licenses";
+import quests from "./routes/quests";
+import governance from "./routes/governance";
+import indexRoutes from "./routes/index";
+
+export function createServer() {
+  const app = express();
+  app.use(cors());
+  app.use(express.json());
+
+  app.use("/characters", characters);
+  app.use("/licenses", licenses);
+  app.use("/quests", quests);
+  app.use("/governance", governance);
+  app.use("/index", indexRoutes);
+
+  app.get("/", (_, res) => res.json({ ok: true, service: "cymos-api" }));
+  return app;
+}
+// apps/api/src/lib/cps.ts
+export function calculateCPS({
+  vaultYieldPct, // ER
+  governanceRating, // GR
+  trustScore, // TR
+  narrativeReach // NR
+}: { vaultYieldPct: number; governanceRating: number; trustScore: number; narrativeReach: number; }) {
+  const w1 = 0.4, w2 = 0.2, w3 = 0.2, w4 = 0.2;
+  // Normalize narrative reach to a 0-100 scale (simple heuristic)
+  const nrNorm = Math.min(100, Math.log10(Math.max(1, narrativeReach)) * 20);
+  const erNorm = Math.min(100, vaultYieldPct * 10);
+  const cps = Math.round(w1 * erNorm + w2 * governanceRating + w3 * trustScore + w4 * nrNorm);
+  return cps;
+}
+// apps/api/src/lib/splits.ts
+export function applySplits(netRevenueUSD: number, policy: {alpha:number;beta:number;gamma:number;delta:number}, trustScore: number) {
+  // TrustScore multiplier: +2% creator share if TS >= 90
+  const multiplier = trustScore >= 90 ? 1.02 : 1.0;
+  const creator = netRevenueUSD * policy.alpha * multiplier;
+  const stewards = netRevenueUSD * policy.beta;
+  const questPool = netRevenueUSD * policy.gamma;
+  const ecosystem = netRevenueUSD * policy.delta;
+  const total = creator + stewards + questPool + ecosystem;
+  return { creator, stewards, questPool, ecosystem, total };
+}
+// apps/api/src/routes/characters.ts
+import { Router } from "express";
+import { PrismaClient } from "@prisma/client";
+import { z } from "zod";
+import { calculateCPS } from "../lib/cps";
+
+const prisma = new PrismaClient();
+const r = Router();
+
+const createSchema = z.object({
+  name: z.string().min(2),
+  archetype: z.string().min(2),
+  purpose: z.string().min(4),
+  voiceRate: z.number().min(0).max(1).optional().default(0.065),
+  splits: z.object({ alpha: z.number(), beta: z.number(), gamma: z.number(), delta: z.number() })
+    .refine(s => Math.abs(s.alpha + s.beta + s.gamma + s.delta - 1) < 1e-6, "Splits must sum to 1"),
+  canonHash: z.string().min(16)
+});
+
+r.post("/", async (req, res) => {
+  const parsed = createSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json(parsed.error);
+  const { name, archetype, purpose, voiceRate, splits, canonHash } = parsed.data;
+
+  const character = await prisma.character.create({
+    data: { name, archetype, purpose, voiceRate, canonHash,
+      splits: { create: splits },
+      metrics: { create: { vaultYieldPct: 0, narrativeReach: 0, cps: 0 } }
+    },
+    include: { splits: true, metrics: true }
+  });
+  res.json(character);
+});
+
+r.get("/", async (_req, res) => {
+  const list = await prisma.character.findMany({ include: { splits: true, metrics: true } });
+  res.json(list);
+});
+
+r.get("/:id", async (req, res) => {
+  const c = await prisma.character.findUnique({ where: { id: req.params.id }, include: { splits: true, metrics: true, licenses: true, quests: true } });
+  if (!c) return res.status(404).json({ error: "Not found" });
+  res.json(c);
+});
+
+r.post("/:id/metrics/recompute", async (req, res) => {
+  const c = await prisma.character.findUnique({ where: { id: req.params.id }, include: { metrics: true } });
+  if (!c || !c.metrics) return res.status(404).json({ error: "Not found" });
+  const cps = calculateCPS({
+    vaultYieldPct: c.metrics.vaultYieldPct,
+    governanceRating: 80, // placeholder; wire to governance module
+    trustScore: c.trustScore,
+    narrativeReach: c.metrics.narrativeReach
+  });
+  const updated = await prisma.metrics.update({ where: { id: c.metrics.id }, data: { cps } });
+  res.json(updated);
+});
+
+export default r;
+// apps/api/src/routes/licenses.ts
+import { Router } from "express";
+import { PrismaClient } from "@prisma/client";
+import { z } from "zod";
+
+const prisma = new PrismaClient();
+const r = Router();
+
+const licenseSchema = z.object({
+  characterId: z.string(),
+  channel: z.enum(["Retail","MobileGame","Event"]),
+  region: z.enum(["US","CA","EU"]),
+  durationMo: z.number().int().min(1),
+  exclusivity: z.enum(["Non-exclusive","Exclusive"]),
+  feePerUnit: z.number().min(0).default(0.02),
+  percentage: z.number().min(0).max(1).default(0.05)
+});
+
+r.post("/", async (req, res) => {
+  const p = licenseSchema.safeParse(req.body);
+  if (!p.success) return res.status(400).json(p.error);
+  const lic = await prisma.license.create({ data: p.data });
+  res.json(lic);
+});
+
+r.post("/:id/report", async (req, res) => {
+  const { unitsSold, grossUSD } = req.body as { unitsSold:number; grossUSD:number };
+  const lic = await prisma.license.findUnique({ where: { id: req.params.id } });
+  if (!lic) return res.status(404).json({ error: "License not found" });
+  const rev = lic.percentage * grossUSD + lic.feePerUnit * unitsSold;
+  const updated = await prisma.license.update({ where: { id: lic.id }, data: { revenue: (lic.revenue ?? 0) + rev } });
+
+  // Update vault yield proxy in metrics (simplified)
+  const metrics = await prisma.metrics.findUnique({ where: { characterId: lic.characterId } });
+  if (metrics) {
+    const newYield = Math.min(100, metrics.vaultYieldPct + (rev / 10000)); // heuristic
+    await prisma.metrics.update({ where: { id: metrics.id }, data: { vaultYieldPct: newYield } });
+  }
+  res.json({ updated, rev });
+});
+
+export default r;
+// apps/api/src/routes/quests.ts
+import { Router } from "express";
+import { PrismaClient } from "@prisma/client";
+import { z } from "zod";
+
+const prisma = new PrismaClient();
+const r = Router();
+
+const questSchema = z.object({
+  characterId: z.string(),
+  title: z.string(),
+  objective: z.string(),
+  rewardCreds: z.number().int().min(0),
+  revShareTag: z.boolean().default(true)
+});
+
+r.post("/", async (req, res) => {
+  const p = questSchema.safeParse(req.body);
+  if (!p.success) return res.status(400).json(p.error);
+  const q = await prisma.quest.create({ data: p.data });
+  res.json(q);
+});
+
+r.post("/:id/proof", async (req, res) => {
+  const { inflowUSD } = req.body as { inflowUSD:number };
+  const q = await prisma.quest.findUnique({ where: { id: req.params.id } });
+  if (!q) return res.status(404).json({ error: "Quest not found" });
+  const updated = await prisma.quest.update({ where: { id: q.id }, data: { proofs: q.proofs + 1, inflowUSD: q.inflowUSD + inflowUSD } });
+
+  // Update narrative reach and yield proxies
+  const metrics = await prisma.metrics.findUnique({ where: { characterId: q.characterId } });
+  if (metrics) {
+    await prisma.metrics.update({
+      where: { id: metrics.id },
+      data: { narrativeReach: metrics.narrativeReach + 1, vaultYieldPct: Math.min(100, metrics.vaultYieldPct + inflowUSD / 20000) }
+    });
+  }
+  res.json(updated);
+});
+
+export default r;
+// apps/api/src/routes/governance.ts
+import { Router } from "express";
+const r = Router();
+
+// Placeholder governance endpoints (integrate with on-chain later)
+r.get("/proposals", (_req, res) => {
+  res.json([{ id: "P-001", title: "Feature Heidi Hero in Ecosystem Activation", status: "Active" }]);
+});
+
+r.post("/vote", (req, res) => {
+  const { proposalId, choice } = req.body as { proposalId:string; choice:"Approve"|"Reject" };
+  res.json({ ok: true, proposalId, choice, recorded: true });
+});
+
+export default r;
+// apps/api/src/routes/index.ts
+import { Router } from "express";
+import { PrismaClient } from "@prisma/client";
+import { calculateCPS } from "../lib/cps";
+
+const prisma = new PrismaClient();
+const r = Router();
+
+r.get("/prime", async (_req, res) => {
+  const chars = await prisma.character.findMany({ include: { metrics: true } });
+  const ranked = chars.map(c => {
+    const cps = calculateCPS({
+      vaultYieldPct: c.metrics?.vaultYieldPct ?? 0,
+      governanceRating: 80,
+      trustScore: c.trustScore,
+      narrativeReach: c.metrics?.narrativeReach ?? 0
+    });
+    return { id: c.id, name: c.name, cps, trustScore: c.trustScore, yield: c.metrics?.vaultYieldPct ?? 0, reach: c.metrics?.narrativeReach ?? 0 };
+  }).sort((a, b) => b.cps - a.cps);
+  res.json(ranked.slice(0, 20));
+});
+
+export default r;
