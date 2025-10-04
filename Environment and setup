@@ -1,0 +1,36 @@
+# apps/api
+DATABASE_URL=postgres://cymos:cymos@localhost:5432/cymos
+PORT=4000
+
+# apps/web
+VITE_API_URL=http://localhost:4000
+# Cymos Character Creation Platform
+
+A modular, full‑stack implementation of the Cymos character ecosystem: registry‑anchored characters, licensing, quests, vault yield proxies, and a Character Stock Exchange Index (CSEI) dashboard.
+
+## Modules
+- API (Express + Prisma): characters, licenses, quests, governance, index
+- Web (React + Vite): creator UI, steward review, license panel, quest board, index dashboard
+- Contracts (Solidity + Hardhat): registry, vault, governance (MVP)
+
+## Run locally
+1. pnpm install
+2. docker compose up -d db
+3. pnpm -C apps/api prisma:migrate
+4. pnpm dev:api
+5. pnpm dev:web
+
+## API endpoints
+- POST /characters
+- GET /characters
+- GET /characters/:id
+- POST /characters/:id/metrics/recompute
+- POST /licenses
+- POST /licenses/:id/report
+- POST /quests
+- POST /quests/:id/proof
+- GET /index/prime
+
+## Notes
+- CPS and vault yield are simplified proxies; wire to real revenue feeds and governance signals.
+- Smart contracts are MVP examples for registry/vault/governance — integrate wallets and distribution logic for production.
