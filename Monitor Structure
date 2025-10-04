@@ -1,0 +1,59 @@
+cymos-platform/
+├─ README.md
+├─ .gitignore
+├─ .env.example
+├─ docker-compose.yml
+├─ package.json
+├─ pnpm-lock.yaml
+├─ pnpm-workspace.yaml
+├─ apps/
+│  ├─ api/
+│  │  ├─ package.json
+│  │  ├─ tsconfig.json
+│  │  ├─ prisma/
+│  │  │  ├─ schema.prisma
+│  │  │  └─ seed.ts
+│  │  └─ src/
+│  │     ├─ index.ts
+│  │     ├─ server.ts
+│  │     ├─ routes/
+│  │     │  ├─ characters.ts
+│  │     │  ├─ licenses.ts
+│  │     │  ├─ quests.ts
+│  │     │  ├─ governance.ts
+│  │     │  └─ index.ts
+│  │     ├─ lib/
+│  │     │  ├─ cps.ts
+│  │     │  ├─ trustscore.ts
+│  │     │  ├─ provenance.ts
+│  │     │  └─ splits.ts
+│  │     └─ middleware/
+│  │        └─ validate.ts
+│  └─ web/
+│     ├─ package.json
+│     ├─ tsconfig.json
+│     ├─ vite.config.ts
+│     └─ src/
+│        ├─ main.tsx
+│        ├─ App.tsx
+│        ├─ components/
+│        │  ├─ CharacterCreator.tsx
+│        │  ├─ StewardReview.tsx
+│        │  ├─ LicensePanel.tsx
+│        │  ├─ QuestBoard.tsx
+│        │  └─ IndexDashboard.tsx
+│        └─ api/
+│           └─ client.ts
+├─ contracts/
+│  ├─ package.json
+│  ├─ hardhat.config.ts
+│  ├─ contracts/
+│  │  ├─ CharacterRegistry.sol
+│  │  ├─ CharacterVault.sol
+│  │  └─ Governance.sol
+│  └─ scripts/
+│     ├─ deploy.ts
+│     └─ verify.ts
+└─ .github/
+   └─ workflows/
+      └─ ci.yml
